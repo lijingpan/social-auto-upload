@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
 
-from playwright.async_api import Playwright, async_playwright, Page
+from playwright.async_api import Playwright, async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 import os
 import asyncio
 
@@ -141,9 +141,15 @@ class DouYinVideo(object):
         # 检查是否存在包含输入框的元素
         # 这里为了避免页面变化，故使用相对位置定位：作品标题父级右侧第一个元素的input子元素
         await asyncio.sleep(1)
-        douyin_logger.info(f'  [-] 正在填充标题和话题...')
-        title_container = page.get_by_text('作品标题').locator("..").locator("xpath=following-sibling::div[1]").locator("input")
-        if await title_container.count():
+        douyin_logger.info(f'  [-] 正在填充标题和作品简介...')
+        title_selectors = [
+            "input.semi-input[placeholder*='作品标题']",
+            "input.semi-input[placeholder*='填写作品标题']",
+            "input[placeholder*='作品标题']",
+            ".editor-comp-publish-container-d4oeQI input.semi-input",
+        ]
+        title_container = await self.locate_first_visible(page, title_selectors, timeout=15000)
+        if title_container:
             await title_container.fill(self.title[:30])
         else:
             titlecontainer = page.locator(".notranslate")
@@ -153,10 +159,31 @@ class DouYinVideo(object):
             await page.keyboard.press("Delete")
             await page.keyboard.type(self.title)
             await page.keyboard.press("Enter")
-        css_selector = ".zone-container"
+
+        description_selectors = [
+            ".editor-kit-editor-container .zone-container.editor[contenteditable='true']",
+            ".zone-container.editor[contenteditable='true']",
+            ".editor-kit-editor-container [contenteditable='true']",
+            ".editor-comp-publish-container-d4oeQI [contenteditable='true']",
+            "[contenteditable='true'][data-placeholder*='作品简介']",
+            "[contenteditable='true'][data-placeholder*='正文']",
+        ]
+        description_editor = await self.locate_first_visible(page, description_selectors, timeout=15000)
+        if description_editor is None:
+            raise RuntimeError("未找到抖音作品简介输入框，请检查页面结构是否发生变化。")
+        await description_editor.click()
+        try:
+            await description_editor.press("Control+KeyA")
+            await description_editor.press("Delete")
+        except Exception:
+            pass
+
+        if self.title:
+            await description_editor.type(self.title)
+            await description_editor.type("\n")
+
         for index, tag in enumerate(self.tags, start=1):
-            await page.type(css_selector, "#" + tag)
-            await page.press(css_selector, "Space")
+            await description_editor.type(f"#{tag} ")
         douyin_logger.info(f'总共添加{len(self.tags)}个话题')
         while True:
             # 判断重新上传按钮是否存在，如果不存在，代表视频正在上传，则等待
@@ -347,6 +374,21 @@ class DouYinVideo(object):
         except Exception as e:
             douyin_logger.error(f"[-] 设置商品链接时出错: {str(e)}")
             return False
+
+    async def locate_first_visible(self, page: Page, selectors, timeout=5000):
+        """
+        Try selectors sequentially and return the first visible locator.
+        """
+        for selector in selectors:
+            locator = page.locator(selector).first
+            if not await locator.count():
+                continue
+            try:
+                await locator.wait_for(state="visible", timeout=timeout)
+                return locator
+            except PlaywrightTimeoutError:
+                continue
+        return None
 
     async def main(self):
         async with async_playwright() as playwright:
