@@ -125,11 +125,17 @@ def _call_chat_completion(messages: List[Dict[str, str]]) -> str:
     if not model:
         raise AIServiceError(f"{provider} 缺少默认模型配置")
 
-    timeout = AI_PROVIDER_SETTINGS.get("timeout") or 30
+    timeout = AI_PROVIDER_SETTINGS.get("timeout") or 60
     try:
         timeout = int(timeout)
     except (TypeError, ValueError):
         timeout = 30
+
+    retries = AI_PROVIDER_SETTINGS.get("max_retries", 2)
+    try:
+        retries = int(retries)
+    except (TypeError, ValueError):
+        retries = 2
 
     url = f"{base_url}/chat/completions"
     payload = {
@@ -142,15 +148,29 @@ def _call_chat_completion(messages: List[Dict[str, str]]) -> str:
         "Content-Type": "application/json",
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        response.raise_for_status()
-        response_json = response.json()
-    except requests.RequestException as exc:
-        logger.exception("AI provider request failed")
-        raise AIServiceError(f"AI 调用失败: {exc}") from exc
-    except ValueError as exc:
-        raise AIServiceError("AI 返回数据不是有效的 JSON") from exc
+    attempt = 0
+    last_error = None
+    while attempt <= retries:
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            response.raise_for_status()
+            response_json = response.json()
+            break
+        except requests.exceptions.Timeout as exc:
+            last_error = exc
+            logger.warning("AI provider timeout on attempt %s/%s", attempt + 1, retries + 1)
+            if attempt >= retries:
+                raise AIServiceError(f"AI 调用超时，请稍后重试 ({timeout}s)") from exc
+            attempt += 1
+            continue
+        except requests.RequestException as exc:
+            logger.exception("AI provider request failed")
+            raise AIServiceError(f"AI 调用失败: {exc}") from exc
+        except ValueError as exc:
+            raise AIServiceError("AI 返回数据不是有效的 JSON") from exc
+    else:
+        # should not reach here; guard for completeness
+        raise AIServiceError("AI 调用失败，请稍后重试") from last_error
 
     choices = response_json.get("choices")
     if not choices:
