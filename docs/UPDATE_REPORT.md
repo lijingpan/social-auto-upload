@@ -38,3 +38,10 @@
 - 固定端口：后端 `5409`、前端 `5173`。遇到冲突先执行端口清理。
 - 配置项如 `AI_API_KEY` 建议通过环境变量传入，避免明文。
 
+## TikTok 上传修复（Playwright 浏览器路径）
+- 问题：`POST /postVideo` 触发 TikTok 上传时，Playwright 报错 `BrowserType.launch: Failed to launch: Error: spawn . EACCES`。
+- 原因：当 `LOCAL_CHROME_PATH` 未设置或值不可执行时，代码无条件传入 `executable_path`，导致尝试以当前目录 `.` 作为可执行文件路径。
+- 修复：`uploader/tk_uploader/main_chrome.py` 已改为仅在路径存在且可执行时传递 `executable_path`，否则回退到默认浏览器或系统 Chrome 渠道，避免 `spawn . EACCES`。
+- 使用建议：
+  - 如需使用系统 Chrome：在 shell 中设置 `export LOCAL_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"`（macOS 示例）。
+  - 未设置时使用 Playwright 默认浏览器；首次使用可能需要安装浏览器：`python -m playwright install`（如只需 Chromium：`python -m playwright install chromium`）。
