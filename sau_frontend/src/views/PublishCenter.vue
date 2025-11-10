@@ -320,6 +320,34 @@
               show-word-limit
               class="title-input"
             />
+
+            <div
+              v-if="tab.selectedPlatform === 1"
+              class="xhs-title-section"
+            >
+              <div class="xhs-title-header">
+                <span>小红书专用标题（≤20个字符）</span>
+                <el-button
+                  type="primary"
+                  plain
+                  size="small"
+                  :loading="tab.aiXhsTitleLoading"
+                  @click="requestAiXhsTitle(tab)"
+                >
+                  AI生成
+                </el-button>
+              </div>
+              <el-input
+                v-model="tab.xhsTitle"
+                type="textarea"
+                :rows="2"
+                placeholder="请输入不超过20个字符的小红书标题"
+                maxlength="20"
+                show-word-limit
+                class="xhs-title-input"
+              />
+              <p class="xhs-title-hint">建议控制在20个中文字符以内，超出部分发布时将被截断。</p>
+            </div>
           </div>
 
           <!-- 话题输入 -->
@@ -550,6 +578,7 @@ const defaultTabInit = {
   selectedAccounts: [], // 选中的账号ID列表
   selectedPlatform: 1, // 选中的平台（单选）
   title: '',
+  xhsTitle: '',
   productLink: '', // 商品链接
   productTitle: '', // 商品名称
   selectedTopics: [], // 话题列表（不带#号）
@@ -559,7 +588,8 @@ const defaultTabInit = {
   startDays: 0, // 从今天开始计算的发布天数，0表示明天，1表示后天
   publishStatus: null, // 发布状态，包含message和type
   aiTitleLoading: false,
-  aiTopicLoading: false
+  aiTopicLoading: false,
+  aiXhsTitleLoading: false
 }
 
 // helper to create a fresh deep-copied tab from defaultTabInit
@@ -578,6 +608,7 @@ const copyTabContent = (sourceTab, targetTab) => {
   targetTab.fileList = sourceTab.fileList.map(file => ({ ...file }))
   targetTab.displayFileList = sourceTab.displayFileList.map(file => ({ ...file }))
   targetTab.title = sourceTab.title
+  targetTab.xhsTitle = sourceTab.xhsTitle
   targetTab.selectedTopics = [...sourceTab.selectedTopics]
 }
 
@@ -620,7 +651,8 @@ const recommendedTopics = [
 
 const aiTargetLoadingMap = {
   title: 'aiTitleLoading',
-  topics: 'aiTopicLoading'
+  topics: 'aiTopicLoading',
+  xhs_title: 'aiXhsTitleLoading'
 }
 
 const normalizeString = (value) => typeof value === 'string' ? value.trim() : ''
@@ -638,6 +670,7 @@ const buildAiContext = (tab) => {
     productTitle: normalizeString(safeTab.productTitle),
     productLink: normalizeString(safeTab.productLink),
     existingTitle: normalizeString(safeTab.title),
+    existingXhsTitle: normalizeString(safeTab.xhsTitle),
     existingTopics: Array.isArray(safeTab.selectedTopics) ? [...safeTab.selectedTopics] : [],
     fileNames
   }
@@ -646,6 +679,7 @@ const buildAiContext = (tab) => {
 const hasAiContext = (context) => {
   if (!context) return false
   if (context.existingTitle) return true
+  if (context.existingXhsTitle) return true
   if (context.productTitle) return true
   if (context.productLink) return true
   if (Array.isArray(context.existingTopics) && context.existingTopics.length > 0) return true
@@ -659,8 +693,14 @@ const triggerAiGeneration = async (tab, targets) => {
     return
   }
 
-  const normalizedTargets = (targets || []).filter(target => ['title', 'topics'].includes(target))
+  const allowedTargets = ['title', 'topics', 'xhs_title']
+  const normalizedTargets = (targets || []).filter(target => allowedTargets.includes(target))
   if (normalizedTargets.length === 0) {
+    return
+  }
+
+  if (normalizedTargets.includes('xhs_title') && tab.selectedPlatform !== 1) {
+    ElMessage.warning('小红书专用标题仅在选择小红书平台时可用')
     return
   }
 
@@ -697,6 +737,14 @@ const triggerAiGeneration = async (tab, targets) => {
       updated = true
     }
 
+    if (normalizedTargets.includes('xhs_title') && generated.xhsTitle) {
+      tab.xhsTitle = generated.xhsTitle
+      if (tab.selectedPlatform === 1) {
+        tab.title = generated.xhsTitle
+      }
+      updated = true
+    }
+
     if (updated) {
       ElMessage.success('AI生成完成')
     } else {
@@ -714,6 +762,7 @@ const triggerAiGeneration = async (tab, targets) => {
 
 const requestAiTitle = (tab) => triggerAiGeneration(tab, ['title'])
 const requestAiTopics = (tab) => triggerAiGeneration(tab, ['topics'])
+const requestAiXhsTitle = (tab) => triggerAiGeneration(tab, ['xhs_title'])
 
 // 添加新tab
 const addTab = () => {
@@ -885,11 +934,6 @@ const confirmPublish = async (tab) => {
       reject(new Error('请先上传视频文件'))
       return
     }
-    if (!tab.title.trim()) {
-      ElMessage.error('请输入标题')
-      reject(new Error('请输入标题'))
-      return
-    }
     if (!tab.selectedPlatform) {
       ElMessage.error('请选择发布平台')
       reject(new Error('请选择发布平台'))
@@ -901,10 +945,29 @@ const confirmPublish = async (tab) => {
       return
     }
     
+    const baseTitle = tab.title ? tab.title.trim() : ''
+    const xhsTitleValue = tab.xhsTitle ? tab.xhsTitle.trim() : ''
+    const resolvedTitle = tab.selectedPlatform === 1
+      ? (xhsTitleValue || baseTitle)
+      : baseTitle
+
+    if (!resolvedTitle) {
+      ElMessage.error('请输入标题')
+      reject(new Error('请输入标题'))
+      return
+    }
+
+    if (tab.selectedPlatform === 1 && resolvedTitle.length > 20) {
+      ElMessage.error('小红书标题不能超过20个字符')
+      reject(new Error('小红书标题不能超过20个字符'))
+      return
+    }
+
     // 构造发布数据，符合后端API格式
     const publishData = {
       type: tab.selectedPlatform,
-      title: tab.title,
+      title: resolvedTitle,
+      xhsTitle: xhsTitleValue,
       tags: tab.selectedTopics, // 不带#号的话题列表
       fileList: tab.fileList.map(file => file.path), // 只发送文件路径
       accountList: tab.selectedAccounts.map(accountId => {
@@ -940,11 +1003,13 @@ const confirmPublish = async (tab) => {
         tab.fileList = []
         tab.displayFileList = []
         tab.title = ''
+        tab.xhsTitle = ''
         tab.selectedTopics = []
         tab.selectedAccounts = []
         tab.scheduleEnabled = false
         tab.aiTitleLoading = false
         tab.aiTopicLoading = false
+        tab.aiXhsTitleLoading = false
         resolve()
       } else {
         tab.publishStatus = {
@@ -1357,6 +1422,38 @@ const batchPublish = async () => {
         
         .title-input {
           max-width: 600px;
+        }
+
+        .xhs-title-section {
+          margin-top: 12px;
+          padding: 12px;
+          border: 1px solid #ebeef5;
+          border-radius: 6px;
+          background-color: #f8f9fb;
+
+          .xhs-title-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 8px;
+
+            span {
+              font-size: 14px;
+              font-weight: 500;
+              color: #303133;
+            }
+          }
+
+          .xhs-title-input {
+            max-width: 450px;
+          }
+
+          .xhs-title-hint {
+            margin: 6px 0 0 0;
+            font-size: 12px;
+            color: #909399;
+          }
         }
         
         .topic-display {

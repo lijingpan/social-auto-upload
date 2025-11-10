@@ -21,7 +21,7 @@ DEFAULT_MODELS = {
     "glm-4.6": "glm-4.6",
 }
 
-VALID_TARGETS = {"title", "topics"}
+VALID_TARGETS = {"title", "topics", "xhs_title"}
 
 PROVIDER_ALIASES = {
     "gpt": "openai",
@@ -74,12 +74,15 @@ def _build_prompt(targets: List[str], context: Dict) -> List[Dict[str, str]]:
     product_title = context.get("productTitle") or context.get("product_title") or ""
     product_link = context.get("productLink") or context.get("product_link") or ""
     existing_title = context.get("existingTitle") or context.get("existing_title") or ""
+    existing_xhs_title = context.get("existingXhsTitle") or context.get("existing_xhs_title") or ""
     existing_topics = context.get("existingTopics") or context.get("existing_topics") or []
     file_names = context.get("fileNames") or context.get("file_names") or []
 
     target_desc = []
     if "title" in targets:
         target_desc.append("一个不超过100个中文字符、吸引用户的短视频标题")
+    if "xhs_title" in targets:
+        target_desc.append("一条不超过20个中文字符的小红书专用标题")
     if "topics" in targets:
         target_desc.append("3-5个热门中文话题（不带#符号）")
     target_text = "，并".join(target_desc) if len(target_desc) > 1 else target_desc[0]
@@ -90,9 +93,10 @@ def _build_prompt(targets: List[str], context: Dict) -> List[Dict[str, str]]:
         f"商品链接：{product_link or '无'}",
         f"已有标题：{existing_title or '无'}",
         f"已有话题：{', '.join(existing_topics) or '无'}",
+        f"已有小红书标题：{existing_xhs_title or '无'}",
         f"视频素材名称：{', '.join(file_names) or '无'}",
         f"请根据以上信息生成{target_text}。",
-        "输出格式必须是 JSON，示例：{\"title\": \"...\", \"topics\": [\"话题1\", \"话题2\"]}",
+        "输出格式必须是 JSON，示例：{\"title\": \"...\", \"xhs_title\": \"...\", \"topics\": [\"话题1\", \"话题2\"]}",
         "只返回 JSON 内容，不要包含解释或代码块。",
         "确保话题项不包含#符号。",
     ])
@@ -225,6 +229,12 @@ def _extract_targets(payload: Dict, targets: List[str]) -> Dict:
         normalized = _normalize_topics(topics)
         if normalized:
             result["topics"] = normalized
+
+    if "xhs_title" in targets:
+        xhs_title = _pick_first(payload, ["xhs_title", "xhsTitle", "xhs-title", "xhs"])
+        if xhs_title:
+            cleaned = xhs_title.strip()
+            result["xhsTitle"] = cleaned[:20]
 
     return result
 
