@@ -70,7 +70,7 @@ def post_video_ks(title,files,tags,account_file,category=TencentZoneTypes.LIFEST
             asyncio.run(app.main(), debug=False)
 
 def post_video_tiktok(title, files, tags, account_file, category=None, enableTimer=False,
-                      videos_per_day=1, daily_times=None, start_days=0, thumbnail_path=''):
+                      videos_per_day=1, daily_times=None, start_days=0, thumbnail_path='', is_ai_content=None):
     account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
     files = [Path(BASE_DIR / "videoFile" / file) for file in files]
     if enableTimer:
@@ -83,7 +83,8 @@ def post_video_tiktok(title, files, tags, account_file, category=None, enableTim
             print(f"视频文件名：{file}")
             print(f"标题：{title}")
             print(f"Hashtag：{tags}")
-            app = TiktokVideo(title, str(file), tags or [], publish_datetimes[index], cookie, thumbnail_path)
+            app = TiktokVideo(title, str(file), tags or [], publish_datetimes[index], cookie, thumbnail_path,
+                              is_ai_content=is_ai_content)
             asyncio.run(app.main(), debug=False)
 
 def post_video_xhs(title,files,tags,account_file,category=TencentZoneTypes.LIFESTYLE.value,enableTimer=False,videos_per_day = 1, daily_times=None,start_days = 0):

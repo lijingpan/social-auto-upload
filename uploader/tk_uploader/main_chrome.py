@@ -72,7 +72,7 @@ async def get_tiktok_cookie(account_file):
 
 
 class TiktokVideo(object):
-    def __init__(self, title, file_path, tags, publish_date, account_file, thumbnail_path=None):
+    def __init__(self, title, file_path, tags, publish_date, account_file, thumbnail_path=None, is_ai_content=None):
         self.title = title
         self.file_path = file_path
         self.tags = tags
@@ -81,6 +81,7 @@ class TiktokVideo(object):
         self.account_file = account_file
         self.local_executable_path = LOCAL_CHROME_PATH
         self.locator_base = None
+        self.is_ai_content = is_ai_content
 
     async def set_schedule_time(self, page, publish_date):
         schedule_input_element = self.locator_base.get_by_label('Schedule')
@@ -173,19 +174,52 @@ class TiktokVideo(object):
         await page.goto("https://www.tiktok.com/tiktokstudio/upload")
         tiktok_logger.info(f'[+]Uploading-------{self.title}.mp4')
 
-        await page.wait_for_url("https://www.tiktok.com/tiktokstudio/upload", timeout=10000)
+        await page.wait_for_url("https://www.tiktok.com/tiktokstudio/upload", timeout=20000)
+
+        # 等待页面加载完成
+        await page.wait_for_load_state('networkidle', timeout=30000)
+        tiktok_logger.info("Page load state: networkidle")
 
         try:
-            await page.wait_for_selector('iframe[data-tt="Upload_index_iframe"], div.upload-container', timeout=10000)
+            # 增加等待时间到30秒
+            await page.wait_for_selector('iframe[data-tt="Upload_index_iframe"], div.upload-container', timeout=30000)
             tiktok_logger.info("Either iframe or div appeared.")
         except Exception as e:
-            tiktok_logger.error("Neither iframe nor div appeared within the timeout.")
+            tiktok_logger.error(f"Neither iframe nor div appeared within the timeout: {e}")
+            # 截图以帮助调试
+            try:
+                await page.screenshot(path='debug_upload_page.png')
+                tiktok_logger.info("Screenshot saved to debug_upload_page.png")
+            except:
+                pass
+            raise Exception("Failed to load TikTok upload page")
 
         await self.choose_base_locator(page)
 
+        # 添加额外延迟确保页面完全加载
+        await page.wait_for_timeout(2000)
+
         upload_button = self.locator_base.locator(
             'button:has-text("Select video"):visible')
-        await upload_button.wait_for(state='visible')  # 确保按钮可见
+
+        try:
+            await upload_button.wait_for(state='visible', timeout=30000)  # 增加等待时间
+            tiktok_logger.info("Upload button is visible")
+        except Exception as e:
+            tiktok_logger.error(f"Upload button not found: {e}")
+            # 尝试查找其他可能的按钮
+            alternative_button = self.locator_base.locator('button[aria-label="Select video"]')
+            if await alternative_button.count():
+                tiktok_logger.info("Found alternative upload button")
+                upload_button = alternative_button
+            else:
+                # 截图以帮助调试
+                try:
+                    await page.screenshot(path='debug_button_missing.png')
+                    tiktok_logger.info("Screenshot saved to debug_button_missing.png")
+                except:
+                    pass
+                raise Exception("Upload button not found")
 
         async with page.expect_file_chooser() as fc_info:
             await upload_button.click()
@@ -198,6 +232,7 @@ class TiktokVideo(object):
         if self.thumbnail_path:
             tiktok_logger.info(f'[+] Uploading thumbnail file {self.title}.png')
             await self.upload_thumbnails(page)
+        await self.configure_ai_generated_flag(page)
 
         if self.publish_date != 0:
             await self.set_schedule_time(page, self.publish_date)
@@ -256,18 +291,198 @@ class TiktokVideo(object):
             "button", name="Confirm").click()
         await page.wait_for_timeout(3000)  # wait 3s, fix it later
 
+    async def configure_ai_generated_flag(self, page):
+        if self.is_ai_content is None:
+            return
+        try:
+            await self.expand_advanced_settings(page)
+            await self.set_ai_generated_switch(page, bool(self.is_ai_content))
+        except Exception as exc:
+            tiktok_logger.warning(f"[+] configure AI content flag failed: {exc}")
+
+    async def expand_advanced_settings(self, page):
+        if not self.locator_base:
+            return False
+        container = self.locator_base.locator('[data-e2e="advanced_settings_container"]')
+        if not await container.count():
+            tiktok_logger.warning("[+] advanced settings container not found")
+            return False
+        try:
+            await container.first.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        class_attr = (await container.first.get_attribute("class") or "").lower()
+        if "collapsed" not in class_attr:
+            return True
+        toggle = container.locator(r"text=/显示更多|show\s*more/i").first
+        if not await toggle.count():
+            toggle = container.locator('.more-btn').first
+        if not await toggle.count():
+            tiktok_logger.warning("[+] show-more button for advanced settings not found")
+            return False
+        await toggle.click()
+        for _ in range(5):
+            await page.wait_for_timeout(200)
+            class_attr = (await container.first.get_attribute("class") or "").lower()
+            if "collapsed" not in class_attr:
+                return True
+        tiktok_logger.warning("[+] advanced settings still collapsed after clicking show more")
+        return False
+
+    async def set_ai_generated_switch(self, page, enable_flag):
+        if not self.locator_base:
+            return
+        container = self.locator_base.locator('[data-e2e="aigc_container"]')
+        if not await container.count():
+            tiktok_logger.warning("[+] AI content switch container not found")
+            return
+        switch_root = container.locator('[data-layout="switch-root"]').first
+        if not await switch_root.count():
+            switch_root = container.locator('.switch').first
+        current_state = None
+        state_holder = container.locator('[data-state]').first
+        if await state_holder.count():
+            raw_state = (await state_holder.get_attribute('data-state') or '').lower()
+            if raw_state:
+                current_state = raw_state == 'checked'
+        if current_state is None:
+            aria_switch = container.get_by_role("switch").first
+            if await aria_switch.count():
+                aria_state = (await aria_switch.get_attribute("aria-checked") or "").lower()
+                if aria_state:
+                    current_state = aria_state == 'true'
+        if current_state is None:
+            current_state = False
+        if current_state == enable_flag or not await switch_root.count():
+            return
+        await switch_root.click()
+        await page.wait_for_timeout(300)
+
+        # 处理AI内容确认模态框
+        await self.handle_ai_content_modal(page, enable_flag)
+
+    async def handle_ai_content_modal(self, page, enable_flag: bool):
+        """处理AI内容确认模态框"""
+        try:
+            # 等待模态框出现（如果有的话）
+            modal = page.locator('.TUXModal.common-modal[role="dialog"]')
+            if not await modal.count():
+                modal = page.locator('.TUXModal')
+
+            # 检查模态框是否出现，最多等待2秒
+            try:
+                await modal.wait_for(state='visible', timeout=2000)
+            except Exception:
+                # 没有模态框出现，直接返回
+                tiktok_logger.info("[+] No AI content modal appeared")
+                return
+
+            tiktok_logger.info("[+] AI content confirmation modal detected")
+
+            if enable_flag:
+                # 如果是开启AI内容，点击 "Turn on" 按钮
+                # 优先使用 get_by_role 定位按钮
+                turn_on_button = page.get_by_role("button", name="Turn on")
+                if not await turn_on_button.count():
+                    # 备用方案1：使用 data-type 和文本组合
+                    turn_on_button = page.locator('button[data-type="primary"]:has-text("Turn on")')
+                if not await turn_on_button.count():
+                    # 备用方案2：仅使用文本
+                    turn_on_button = page.locator('button:has-text("Turn on")')
+
+                if await turn_on_button.count():
+                    await turn_on_button.click()
+                    tiktok_logger.success("[+] Clicked 'Turn on' button in AI content modal")
+                    await page.wait_for_timeout(500)
+                else:
+                    tiktok_logger.warning("[+] 'Turn on' button not found in modal")
+            else:
+                # 如果是关闭AI内容，点击 "Not now" 按钮（通常不会出现这种情况）
+                not_now_button = page.get_by_role("button", name="Not now")
+                if not await not_now_button.count():
+                    not_now_button = page.locator('button[data-type="neutral"]:has-text("Not now")')
+                if not await not_now_button.count():
+                    not_now_button = page.locator('button:has-text("Not now")')
+
+                if await not_now_button.count():
+                    await not_now_button.click()
+                    tiktok_logger.info("[+] Clicked 'Not now' button in AI content modal")
+                    await page.wait_for_timeout(500)
+                else:
+                    tiktok_logger.warning("[+] 'Not now' button not found in modal")
+
+            # 等待模态框消失
+            try:
+                await modal.wait_for(state='hidden', timeout=3000)
+                tiktok_logger.success("[+] AI content modal closed successfully")
+            except Exception:
+                tiktok_logger.warning("[+] Modal did not close within timeout")
+
+        except Exception as exc:
+            tiktok_logger.warning(f"[+] handle AI content modal failed: {exc}")
+
+    async def verify_ai_content_flag(self, page):
+        """在发布前验证 AI 内容标记是否正确设置"""
+        if not self.locator_base:
+            return
+        try:
+            # 先确保高级设置已展开
+            await self.expand_advanced_settings(page)
+
+            container = self.locator_base.locator('[data-e2e="aigc_container"]')
+            if not await container.count():
+                tiktok_logger.warning("[+] AI content switch container not found during verification")
+                return
+
+            # 获取当前开关状态
+            current_state = None
+            state_holder = container.locator('[data-state]').first
+            if await state_holder.count():
+                raw_state = (await state_holder.get_attribute('data-state') or '').lower()
+                if raw_state:
+                    current_state = raw_state == 'checked'
+
+            if current_state is None:
+                aria_switch = container.get_by_role("switch").first
+                if await aria_switch.count():
+                    aria_state = (await aria_switch.get_attribute("aria-checked") or "").lower()
+                    if aria_state:
+                        current_state = aria_state == 'true'
+
+            if current_state is None:
+                current_state = False
+
+            expected_state = bool(self.is_ai_content)
+
+            # 如果状态不匹配，重新设置
+            if current_state != expected_state:
+                tiktok_logger.warning(f"[+] AI content flag mismatch! Current: {current_state}, Expected: {expected_state}")
+                await self.set_ai_generated_switch(page, expected_state)
+                tiktok_logger.success(f"[+] AI content flag corrected to: {expected_state}")
+            else:
+                tiktok_logger.success(f"[+] AI content flag verified: {current_state}")
+
+        except Exception as exc:
+            tiktok_logger.warning(f"[+] verify AI content flag failed: {exc}")
+
     async def change_language(self, page):
         # 语言切换流程如果失败无需阻塞上传，增加容错
         try:
+            tiktok_logger.info("Starting language switch to English...")
             await page.goto("https://www.tiktok.com")
-            await page.wait_for_load_state('domcontentloaded')
+            await page.wait_for_load_state('domcontentloaded', timeout=15000)
+
             more_menu = page.locator('[data-e2e="nav-more-menu"]')
             await more_menu.wait_for(state='visible', timeout=10000)
             text = (await more_menu.text_content() or "").strip()
+
             if text and text.lower().startswith("more"):
+                tiktok_logger.info("Page is already in English")
                 return
 
+            tiktok_logger.info("Switching to English language...")
             await more_menu.click()
+
             language_entry = page.locator('[data-e2e="language-select"]')
             await language_entry.wait_for(state='visible', timeout=5000)
             await language_entry.click()
@@ -275,14 +490,62 @@ class TiktokVideo(object):
             english_option = page.locator('#creator-tools-selection-menu-header').locator("text=English (US)")
             await english_option.wait_for(state='visible', timeout=5000)
             await english_option.click()
+
+            tiktok_logger.success("Language switched to English successfully")
         except Exception as exc:
             tiktok_logger.warning(f"[+] skip language switch: {exc}")
+
+    async def wait_for_video_check(self):
+        """等待视频检查完成，只有当 data-show="true" 时才能发布"""
+        tiktok_logger.info("  [-] waiting for video content check...")
+        max_wait_time = 120  # 最多等待120秒
+        start_time = time.time()
+
+        while True:
+            try:
+                # 检查是否有状态结果显示
+                status_result = self.locator_base.locator('div.status-result[data-show="true"]')
+
+                if await status_result.count():
+                    # 检查是否是成功状态
+                    is_success = await status_result.locator('.status-success').count() > 0
+                    if is_success:
+                        tiktok_logger.success("  [-] video content check passed!")
+                        return True
+                    else:
+                        # 可能是警告或错误状态
+                        status_text = await status_result.locator('.status-tip').text_content() if await status_result.locator('.status-tip').count() else "Unknown status"
+                        tiktok_logger.warning(f"  [-] video check status: {status_text}")
+                        # 即使有警告，也继续发布
+                        return True
+
+                # 检查是否超时
+                if time.time() - start_time > max_wait_time:
+                    tiktok_logger.warning("  [-] video check timeout, proceeding anyway...")
+                    return False
+
+                await asyncio.sleep(2)
+            except Exception as e:
+                tiktok_logger.warning(f"  [-] error while checking video status: {e}")
+                # 如果超时，继续发布
+                if time.time() - start_time > max_wait_time:
+                    return False
+                await asyncio.sleep(2)
 
     async def click_publish(self, page):
         success_flag_div = 'div.common-modal-confirm-modal'
         while True:
             try:
                 await self.ensure_modal_closed(page, wait_seconds=3)
+
+                # 等待视频检查完成
+                await self.wait_for_video_check()
+
+                # 在发布前最后确认 AI 内容标记设置
+                if self.is_ai_content is not None:
+                    tiktok_logger.info("  [-] verifying AI content flag before publish...")
+                    await self.verify_ai_content_flag(page)
+
                 publish_button = self.locator_base.locator('div.button-group button').nth(0)
                 if await publish_button.count():
                     await publish_button.click()
@@ -425,10 +688,29 @@ class TiktokVideo(object):
 
     async def choose_base_locator(self, page):
         # await page.wait_for_selector('div.upload-container')
-        if await page.locator('iframe[data-tt="Upload_index_iframe"]').count():
+        iframe_count = await page.locator('iframe[data-tt="Upload_index_iframe"]').count()
+        tiktok_logger.info(f"Found {iframe_count} iframe(s)")
+
+        # 调试：检查页面上是否有其他可能的选择器
+        try:
+            all_iframes = await page.locator('iframe').count()
+            tiktok_logger.info(f"Total iframes on page: {all_iframes}")
+
+            upload_container_count = await page.locator('div.upload-container').count()
+            tiktok_logger.info(f"Found {upload_container_count} upload-container div(s)")
+
+            # 检查是否有 "Select video" 相关的按钮
+            select_video_buttons = await page.locator('button').filter(has_text="Select").count()
+            tiktok_logger.info(f"Found {select_video_buttons} button(s) with 'Select' text")
+        except Exception as debug_e:
+            tiktok_logger.warning(f"Debug info collection failed: {debug_e}")
+
+        if iframe_count > 0:
             self.locator_base = page.frame_locator(Tk_Locator.tk_iframe)
+            tiktok_logger.info("Using iframe locator")
         else:
-            self.locator_base = page.locator(Tk_Locator.default) 
+            self.locator_base = page.locator(Tk_Locator.default)
+            tiktok_logger.info("Using default page locator") 
 
     async def main(self):
         async with async_playwright() as playwright:

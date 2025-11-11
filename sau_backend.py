@@ -15,6 +15,17 @@ from myUtils.login import get_tencent_cookie, douyin_cookie_gen, get_ks_cookie, 
 from myUtils.postVideo import post_video_tencent, post_video_DouYin, post_video_ks, post_video_xhs, post_video_tiktok
 
 active_queues = {}
+
+
+def _to_bool(value):
+    """Normalize truthy values coming from JSON payloads."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
 app = Flask(__name__)
 
 #允许所有来源跨域访问
@@ -377,6 +388,7 @@ def postVideo():
     productLink = data.get('productLink', '')
     productTitle = data.get('productTitle', '')
     thumbnail_path = data.get('thumbnail', '')
+    is_ai_content = _to_bool(data.get('isAiContent'))
 
     videos_per_day = data.get('videosPerDay')
     daily_times = data.get('dailyTimes')
@@ -399,7 +411,7 @@ def postVideo():
                       start_days)
         case 5:
             post_video_tiktok(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                              start_days, thumbnail_path)
+                              start_days, thumbnail_path, is_ai_content)
     # 返回响应给客户端
     return jsonify(
         {
@@ -465,6 +477,8 @@ def postVideoBatch():
             category = None
         productLink = data.get('productLink', '')
         productTitle = data.get('productTitle', '')
+        thumbnail_path = data.get('thumbnail', '')
+        is_ai_content = _to_bool(data.get('isAiContent'))
 
         videos_per_day = data.get('videosPerDay')
         daily_times = data.get('dailyTimes')
@@ -484,6 +498,9 @@ def postVideoBatch():
             case 4:
                 post_video_ks(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
                           start_days)
+            case 5:
+                post_video_tiktok(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
+                                  start_days, thumbnail_path, is_ai_content)
     # 返回响应给客户端
     return jsonify(
         {

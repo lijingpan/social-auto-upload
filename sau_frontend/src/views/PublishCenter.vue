@@ -506,6 +506,22 @@
             </div>
           </div>
 
+          <!-- AI作品标记 -->
+          <div class="ai-content-section">
+            <h3>AI内容声明</h3>
+            <div class="ai-content-controls">
+              <el-switch
+                v-model="tab.isAiContent"
+                active-text="这是AI生成的内容"
+                inactive-text="非AI生成内容"
+              />
+              <div class="ai-content-hint">
+                <el-icon><InfoFilled /></el-icon>
+                <span>如果视频内容由AI生成，请开启此开关。部分平台要求标注AI内容。</span>
+              </div>
+            </div>
+          </div>
+
           <!-- 操作按钮 -->
           <div class="action-buttons">
             <el-button size="small" @click="cancelPublish(tab)">取消</el-button>
@@ -519,7 +535,7 @@
 
 <script setup>
 import { ref, reactive, computed } from 'vue'
-import { Upload, Plus, Close, Folder } from '@element-plus/icons-vue'
+import { Upload, Plus, Close, Folder, Check, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAccountStore } from '@/stores/account'
 import { useAppStore } from '@/stores/app'
@@ -586,6 +602,7 @@ const defaultTabInit = {
   videosPerDay: 1, // 每天发布视频数量
   dailyTimes: ['10:00'], // 每天发布时间点列表
   startDays: 0, // 从今天开始计算的发布天数，0表示明天，1表示后天
+  isAiContent: false, // 是否为AI生成内容
   publishStatus: null, // 发布状态，包含message和type
   aiTitleLoading: false,
   aiTopicLoading: false,
@@ -980,7 +997,8 @@ const confirmPublish = async (tab) => {
       startDays: tab.scheduleEnabled ? tab.startDays || 0 : 0, // 从今天开始计算的发布天数，0表示明天，1表示后天
       category: 0, //表示非原创
       productLink: tab.productLink.trim() || '', // 商品链接
-      productTitle: tab.productTitle.trim() || '' // 商品名称
+      productTitle: tab.productTitle.trim() || '', // 商品名称
+      isAiContent: tab.isAiContent ? 1 : 0 // 是否为AI生成内容，开启传1，不开启传0
     }
     
     // 调用后端发布API
@@ -1007,6 +1025,7 @@ const confirmPublish = async (tab) => {
         tab.selectedTopics = []
         tab.selectedAccounts = []
         tab.scheduleEnabled = false
+        tab.isAiContent = false
         tab.aiTitleLoading = false
         tab.aiTopicLoading = false
         tab.aiXhsTitleLoading = false
@@ -1386,8 +1405,38 @@ const batchPublish = async () => {
         .title-section,
         .product-section,
         .topic-section,
-        .schedule-section {
+        .schedule-section,
+        .ai-content-section {
           margin-bottom: 30px;
+        }
+
+        .ai-content-section {
+          .ai-content-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+
+            .ai-content-hint {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              padding: 12px;
+              background-color: #f4f4f5;
+              border-radius: 4px;
+              font-size: 13px;
+              color: #606266;
+
+              .el-icon {
+                flex-shrink: 0;
+                font-size: 16px;
+                color: #909399;
+              }
+
+              span {
+                line-height: 1.5;
+              }
+            }
+          }
         }
 
         .product-section {
