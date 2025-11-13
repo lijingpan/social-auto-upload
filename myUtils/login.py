@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from playwright.async_api import async_playwright
+from conf import LOCAL_CHROME_PATH
 
 from myUtils.auth import check_cookie
 from utils.base_social_media import set_init_script
@@ -21,8 +22,10 @@ async def douyin_cookie_gen(id,status_queue):
         options = {
             'headless': False
         }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(executable_path=LOCAL_CHROME_PATH, **options)
+        else:
+            browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options
         context = await set_init_script(context)
@@ -89,10 +92,12 @@ async def get_tencent_cookie(id,status_queue):
             'args': [
                 '--lang en-GB'
             ],
-            'headless': False,  # Set headless option here
+            'headless': False,
         }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(executable_path=LOCAL_CHROME_PATH, **options)
+        else:
+            browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options
         # Pause the page, and start recording manually.
@@ -166,10 +171,12 @@ async def get_ks_cookie(id,status_queue):
             'args': [
                 '--lang en-GB'
             ],
-            'headless': False,  # Set headless option here
+            'headless': False,
         }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(executable_path=LOCAL_CHROME_PATH, **options)
+        else:
+            browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options
         context = await set_init_script(context)
@@ -242,10 +249,12 @@ async def xiaohongshu_cookie_gen(id,status_queue):
             'args': [
                 '--lang en-GB'
             ],
-            'headless': False,  # Set headless option here
+            'headless': False,
         }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(executable_path=LOCAL_CHROME_PATH, **options)
+        else:
+            browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options
         context = await set_init_script(context)
@@ -364,7 +373,10 @@ async def tiktok_cookie_gen(id, status_queue):
             ],
             'headless': False,
         }
-        browser = await playwright.chromium.launch(**options)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(executable_path=LOCAL_CHROME_PATH, **options)
+        else:
+            browser = await playwright.chromium.launch(**options)
         context = await browser.new_context()
         context = await set_init_script(context)
         page = await context.new_page()

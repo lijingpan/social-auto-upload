@@ -26,6 +26,21 @@ else
   fi
 fi
 
+echo "[pre] Ensuring Python virtualenv and dependencies"
+if [ ! -d .venv ]; then
+  if command -v python3 &> /dev/null; then
+    python3 -m venv .venv || true
+  else
+    python -m venv .venv || true
+  fi
+fi
+if [ -f requirements.txt ]; then
+  source .venv/bin/activate 2>/dev/null || true
+  pip install --upgrade pip >/dev/null 2>&1 || true
+  pip install -r requirements.txt || pip3 install -r requirements.txt || true
+  deactivate 2>/dev/null || true
+fi
+
 echo "[1/2] Starting Python Backend Server in a new terminal..."
 
 # Detect if running on macOS or Linux
@@ -34,13 +49,13 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     if [ "$USE_CONDA" = "1" ]; then
       osascript <<EOF
 tell application "Terminal"
-    do script "cd \"$PWD\" && conda activate $CONDA_ENV_NAME && python sau_backend.py"
+    do script "cd \"$PWD\" && conda activate $CONDA_ENV_NAME && python3 sau_backend.py"
 end tell
 EOF
     else
       osascript <<EOF
 tell application "Terminal"
-    do script "cd \"$PWD\" && if [ -d .venv ]; then source .venv/bin/activate; fi; python sau_backend.py"
+    do script "cd \"$PWD\" && if [ -d .venv ]; then source .venv/bin/activate; fi; python3 sau_backend.py"
 end tell
 EOF
     fi
@@ -92,5 +107,20 @@ echo " You can monitor logs there."
 echo "=================================================="
 echo ""
 
-echo "This window will close in 10 seconds..."
-sleep 10
+if command -v npx &> /dev/null; then
+  echo "[health] Waiting for backend http://localhost:5409 ..."
+  npx wait-on --timeout 60000 http://localhost:5409 || echo "[warn] backend health check timed out"
+  echo "[health] Waiting for frontend http://localhost:5173 ..."
+  npx wait-on --timeout 60000 http://localhost:5173 || echo "[warn] frontend health check timed out"
+fi
+
+echo "Backend: http://localhost:5409/"
+echo "Frontend: http://localhost:5173/"
+
+if [ "${RUN_E2E_TEST:-0}" = "1" ]; then
+  if command -v python3 &> /dev/null; then
+    python3 -m e2e.test_publish_center || true
+  else
+    python -m e2e.test_publish_center || true
+  fi
+fi

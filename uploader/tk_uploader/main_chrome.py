@@ -8,7 +8,7 @@ from playwright.async_api import Playwright, async_playwright
 import os
 import asyncio
 
-from conf import LOCAL_CHROME_PATH
+from conf import LOCAL_CHROME_PATH, USE_CDP_CHROME, CHROME_CDP_URL, LOCAL_CHROME_USER_DATA_DIR
 from uploader.tk_uploader.tk_config import Tk_Locator
 from utils.base_social_media import set_init_script
 from utils.files_times import get_absolute_path
@@ -17,7 +17,10 @@ from utils.log import tiktok_logger
 
 async def cookie_auth(account_file):
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(headless=True, executable_path=LOCAL_CHROME_PATH)
+        else:
+            browser = await playwright.chromium.launch(headless=True)
         context = await browser.new_context(storage_state=account_file)
         context = await set_init_script(context)
         # 创建一个新的页面
@@ -59,8 +62,10 @@ async def get_tiktok_cookie(account_file):
             ],
             'headless': False,  # Set headless option here
         }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(executable_path=LOCAL_CHROME_PATH, **options)
+        else:
+            browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options
         context = await set_init_script(context)
@@ -149,24 +154,39 @@ class TiktokVideo(object):
         await file_chooser.set_files(self.file_path)
 
     async def upload(self, playwright: Playwright) -> None:
-        # Guard executable_path: only use if non-empty, exists and is executable; otherwise fallback.
-        launch_kwargs = {"headless": False}
-        path = (self.local_executable_path or "").strip()
-        try:
-            if path and os.path.isfile(path) and os.access(path, os.X_OK):
-                launch_kwargs["executable_path"] = path
-            else:
-                # Fallback to Playwright-managed browser or system Chrome channel
-                # Avoid passing an invalid path like '' which results in spawn . EACCES
-                tiktok_logger.info("[browser] LOCAL_CHROME_PATH 未设置或不可执行，使用默认浏览器/Chrome 渠道")
-                # Uncomment next line if you prefer system Chrome over bundled Chromium
-                # launch_kwargs["channel"] = "chrome"
-        except Exception:
-            # Any unexpected error falls back to default
-            tiktok_logger.info("[browser] 解析浏览器路径失败，回退到默认设置")
-
-        browser = await playwright.chromium.launch(**launch_kwargs)
-        context = await browser.new_context(storage_state=f"{self.account_file}")
+        browser = None
+        context = None
+        if USE_CDP_CHROME:
+            try:
+                browser = await playwright.chromium.connect_over_cdp(CHROME_CDP_URL)
+                if browser.contexts:
+                    context = browser.contexts[0]
+                else:
+                    context = await browser.new_context()
+            except Exception:
+                pass
+        if context is None and LOCAL_CHROME_USER_DATA_DIR:
+            try:
+                if self.local_executable_path and os.path.isfile(self.local_executable_path) and os.access(self.local_executable_path, os.X_OK):
+                    context = await playwright.chromium.launch_persistent_context(LOCAL_CHROME_USER_DATA_DIR, executable_path=self.local_executable_path, headless=False, channel="chrome")
+                else:
+                    context = await playwright.chromium.launch_persistent_context(LOCAL_CHROME_USER_DATA_DIR, headless=False, channel="chrome")
+                browser = context.browser
+            except Exception:
+                pass
+        if context is None:
+            launch_kwargs = {"headless": False}
+            path = (self.local_executable_path or "").strip()
+            try:
+                if path and os.path.isfile(path) and os.access(path, os.X_OK):
+                    launch_kwargs["executable_path"] = path
+                else:
+                    tiktok_logger.info("[browser] LOCAL_CHROME_PATH 未设置或不可执行，使用默认浏览器/Chrome 渠道")
+                    launch_kwargs["channel"] = "chrome"
+            except Exception:
+                pass
+            browser = await playwright.chromium.launch(**launch_kwargs)
+            context = await browser.new_context(storage_state=f"{self.account_file}")
         # context = await set_init_script(context)
         page = await context.new_page()
 
@@ -234,12 +254,18 @@ class TiktokVideo(object):
         await self.click_publish(page)
         tiktok_logger.success(f"video_id: {await self.get_last_video_id(page)}")
 
-        await context.storage_state(path=f"{self.account_file}")  # save cookie
+        await context.storage_state(path=f"{self.account_file}")
         tiktok_logger.info('  [-] update cookie！')
         await asyncio.sleep(2)  # close delay for look the video status
         # close all
-        await context.close()
-        await browser.close()
+        try:
+            await context.close()
+        except Exception:
+            pass
+        try:
+            await browser.close()
+        except Exception:
+            pass
 
     async def add_title_tags(self, page):
         await self.ensure_modal_closed(page, wait_seconds=5)

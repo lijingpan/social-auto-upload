@@ -21,8 +21,10 @@ async def baijiahao_cookie_gen(account_file):
             ],
             'headless': False,  # Set headless option here
         }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(executable_path=LOCAL_CHROME_PATH, **options)
+        else:
+            browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options
         context = await set_init_script(context)
@@ -37,7 +39,10 @@ async def baijiahao_cookie_gen(account_file):
 
 async def cookie_auth(account_file):
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+        if LOCAL_CHROME_PATH:
+            browser = await playwright.chromium.launch(headless=True, executable_path=LOCAL_CHROME_PATH)
+        else:
+            browser = await playwright.chromium.launch(headless=True)
         context = await browser.new_context(storage_state=account_file)
         context = await set_init_script(context)
         # 创建一个新的页面
