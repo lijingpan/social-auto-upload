@@ -2,6 +2,7 @@
 import re
 from datetime import datetime
 import time
+from pathlib import Path
 
 from playwright.async_api import Playwright, async_playwright
 import os
@@ -181,18 +182,11 @@ class TiktokVideo(object):
         tiktok_logger.info("Page load state: networkidle")
 
         try:
-            # 增加等待时间到30秒
-            await page.wait_for_selector('iframe[data-tt="Upload_index_iframe"], div.upload-container', timeout=30000)
-            tiktok_logger.info("Either iframe or div appeared.")
-        except Exception as e:
-            tiktok_logger.error(f"Neither iframe nor div appeared within the timeout: {e}")
-            # 截图以帮助调试
-            try:
-                await page.screenshot(path='debug_upload_page.png')
-                tiktok_logger.info("Screenshot saved to debug_upload_page.png")
-            except:
-                pass
-            raise Exception("Failed to load TikTok upload page")
+            await self.wait_for_upload_surface(page)
+        except Exception as exc:
+            tiktok_logger.error(f"Upload surface not detected in time: {exc}")
+            await self.save_debug_artifacts(page, base_name='debug_upload_page')
+            raise Exception("Failed to load TikTok upload page") from exc
 
         await self.choose_base_locator(page)
 
@@ -685,6 +679,55 @@ class TiktokVideo(object):
         except Exception as exc:
             tiktok_logger.warning(f"[+] wait overlay hidden failed: {exc}")
         return False
+
+    async def save_debug_artifacts(self, page, base_name='debug_upload_page'):
+        screenshot_path = f"{base_name}.png"
+        html_path = f"{base_name}.html"
+        try:
+            await page.screenshot(path=screenshot_path, full_page=True)
+            tiktok_logger.info(f"Screenshot saved to {screenshot_path}")
+        except Exception as screenshot_error:
+            tiktok_logger.warning(f"Failed to save screenshot: {screenshot_error}")
+        try:
+            html_content = await page.content()
+            Path(html_path).write_text(html_content, encoding='utf-8')
+            tiktok_logger.info(f"HTML snapshot saved to {html_path}")
+        except Exception as html_error:
+            tiktok_logger.warning(f"Failed to save HTML snapshot: {html_error}")
+
+    async def wait_for_upload_surface(self, page):
+        timeout_ms = 30000
+        poll_interval = 0.5
+        deadline = time.perf_counter() + timeout_ms / 1000
+        candidate_locators = [
+            ("upload iframe", page.locator('iframe[data-tt="Upload_index_iframe"]')),
+            ("upload container", page.locator('div.upload-container')),
+            ("new upload drag area", page.locator('[data-e2e="upload_drag_area"], [data-e2e="upload_card"]')),
+            ("Select video text", page.locator('div:has-text("Select video to upload")')),
+        ]
+        button_locators = [
+            ("Select video button", page.get_by_role("button", name=re.compile("select\\s+video", re.I))),
+            ("Select file button", page.get_by_role("button", name=re.compile("select\\s+file", re.I))),
+            ("Upload video button", page.get_by_role("button", name=re.compile("upload\\s+(video|files?)", re.I))),
+        ]
+        candidate_locators.extend(button_locators)
+
+        logged_pending = set()
+        last_error = None
+        while time.perf_counter() < deadline:
+            for description, locator in candidate_locators:
+                try:
+                    if await locator.first.is_visible():
+                        tiktok_logger.info(f"{description} detected.")
+                        return
+                    if description not in logged_pending:
+                        tiktok_logger.info(f"{description} not visible yet, waiting...")
+                        logged_pending.add(description)
+                except Exception as candidate_error:
+                    last_error = candidate_error
+            await asyncio.sleep(poll_interval)
+
+        raise TimeoutError("Unable to detect any known upload containers/buttons.") from last_error
 
     async def choose_base_locator(self, page):
         # await page.wait_for_selector('div.upload-container')
